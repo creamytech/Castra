@@ -1,0 +1,1010 @@
+name: Seed marketing site
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Init branch
+        run: |
+          set -e
+          BRANCH="feat/marketing-site"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git show-ref --verify --quiet refs/heads/$BRANCH; then
+            git checkout $BRANCH
+          else
+            git checkout -b $BRANCH
+          fi
+
+      - name: Scaffold Next.js app
+        run: |
+          npx create-next-app@latest web --typescript --tailwind --eslint --app --src-dir false --import-alias "@/*" -y
+
+      - name: Install deps
+        working-directory: web
+        run: |
+          npm i framer-motion next-themes next-seo lucide-react @vercel/og class-variance-authority clsx
+
+      - name: Write files
+        run: |
+          set -euo pipefail
+          cd web
+
+          # Tailwind config
+          cat > tailwind.config.ts << 'EOF'
+import type { Config } from "tailwindcss";
+export default {
+  darkMode: ["class"],
+  content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: { indigo:"#2E2A47", gold:"#D4AF37", soft:"#FAFAFA", slate:"#6B7280", teal:"#2CA6A4" },
+      boxShadow: { glow: "0 0 60px rgba(212,175,55,0.18)" },
+      fontFamily: { sans:["var(--font-inter)","system-ui","sans-serif"], serif:["var(--font-serif)","serif"] }
+    },
+  },
+  plugins: [],
+} satisfies Config;
+EOF
+
+          # Global CSS
+          cat > app/globals.css << 'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light dark; }
+html, body { height: 100%; }
+body { @apply bg-soft text-indigo antialiased; }
+
+.bg-gradient-radial { background-image: radial-gradient(var(--tw-gradient-stops)); }
+.glass { @apply bg-white/70 dark:bg-white/[0.05] backdrop-blur; }
+.h-serif { @apply font-serif tracking-tight; }
+
+.marquee { display: flex; gap: 2rem; animation: scroll 30s linear infinite; }
+@keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+.sticky-cta { @apply fixed bottom-4 left-4 right-4 z-30 md:hidden; }
+EOF
+
+          # SEO config
+          cat > next-seo.config.ts << 'EOF'
+const url = process.env.NEXT_PUBLIC_SITE_URL || "https://castra.example.com";
+export default {
+  title: "Castra — Inbox & Calendar Co-Pilot",
+  description: "Reply in 10 seconds. Book more tours.",
+  openGraph: {
+    type: "website",
+    url,
+    title: "Castra — Inbox & Calendar Co-Pilot",
+    description: "Reply in 10 seconds. Book more tours.",
+    images: [{ url: `${url}/api/og`, width: 1200, height: 630, alt: "Castra" }]
+  },
+  twitter: { cardType: "summary_large_image" }
+};
+EOF
+
+          # lib
+          mkdir -p lib
+          cat > lib/copy.ts << 'EOF'
+export const siteCopy = {
+  brand: "Castra",
+  hero: {
+    eyebrow: "Inbox & calendar co-pilot",
+    title: "Reply in 10 seconds. Book more tours.",
+    subtitle:
+      "Castra reads new leads, drafts a perfect reply in your voice, and proposes calendar slots—so you never miss a hot lead.",
+    primaryCta: "Try the Live Demo",
+    secondaryCta: "Join Waitlist",
+    trust: ["Agent-approved sending", "No data sold", "SOC 2 in progress"]
+  },
+  features: [
+    { title: "Tone-matched replies", body: "Professional, friendly, high-energy, or luxury—grammatically precise and on-brand." },
+    { title: "Smart scheduling", body: "Checks your calendar and proposes time slots automatically—no back-and-forth." },
+    { title: "Lead triage", body: "Flags urgency, extracts property details, and highlights next steps." },
+    { title: "Your control", body: "Drafts only—nothing sends without your approval." }
+  ],
+  howItWorks: [
+    { step: "01", title: "Connect inbox & calendar", body: "Gmail or Outlook via OAuth. Read-only by default; drafts only." },
+    { step: "02", title: "Set your voice", body: "Choose a tone or paste a sample reply to match your style." },
+    { step: "03", title: "Review & send", body: "Approve in one click. Everything is logged and editable." }
+  ],
+  security: {
+    bullets: [
+      "OAuth & least-privilege scopes",
+      "Encryption in transit & at rest",
+      "Approval gate (drafts only by default)",
+      "No training on your emails without consent"
+    ]
+  },
+  testimonials: [
+    { quote: "My response times dropped under 5 minutes. Game changer.", name: "Sam P.", role: "Listing Agent, NYC" },
+    { quote: "It sounds like me and books tours automatically.", name: "Ava R.", role: "Buyer’s Agent, LA" }
+  ],
+  pricing: {
+    title: "Simple pricing",
+    subtitle: "One plan with everything you need.",
+    plan: { name: "Pro", price: "$200/mo", cta: "Start 14-day Trial", bullets: ["Unlimited drafts", "Tone profiles", "Calendar slotting", "Lead triage", "Team-ready soon"] }
+  },
+  faq: [
+    { q: "Does it send without my approval?", a: "No. You review every draft before it goes out." },
+    { q: "Will it work with Okta/SSO?", a: "Yes. OAuth works with enterprise SSO; for portals we offer a browser extension soon." },
+    { q: "Do you replace my CRM?", a: "No—we help you reply faster and will auto-log to your CRM as integrations roll out." }
+  ],
+  footer: {
+    ctaTitle: "Make time for what matters",
+    ctaSubtitle: "Join the waitlist or start a 14-day free trial.",
+    ctaButton: "Join Waitlist"
+  }
+};
+EOF
+
+          cat > lib/format.ts << 'EOF'
+export function formatSlot(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+EOF
+
+          cat > lib/gradients.ts << 'EOF'
+export const premiumBlobs = [
+  { className: "from-[#2E2A47] to-transparent", style: { top: "-20%", left: "-10%", width: "50rem", height: "50rem" } },
+  { className: "from-[#D4AF37] to-transparent", style: { bottom: "-25%", right: "-10%", width: "42rem", height: "42rem" } }
+];
+EOF
+
+          cat > lib/busy.ts << 'EOF'
+export const busyBlocks = [
+  ["2025-08-09T13:00:00","2025-08-09T14:00:00"],
+  ["2025-08-09T16:30:00","2025-08-09T17:15:00"],
+  ["2025-08-10T10:00:00","2025-08-10T12:00:00"]
+];
+EOF
+
+          cat > lib/templates.ts << 'EOF'
+import { formatSlot } from "./format";
+type Tone = "Professional" | "Friendly" | "High-energy" | "Luxury";
+const greet = (name:string) => `Hi ${name},`;
+const slotsLine = (slots:string[]) =>
+  slots.length ? `My next openings are ${formatSlot(slots[0])} or ${formatSlot(slots[1] || slots[0])}.` : "";
+
+export const templates: Record<string, Record<Tone, (name:string, slots:string[]) => string>> = {
+  tour: {
+    Professional: (name, slots) =>
+      `${greet(name)}\n\nThank you for reaching out—124 Oak St is available. ${slotsLine(slots)} Please let me know which time works best, and I will confirm the tour.\n\nBest regards,\nCastra (in your agent’s voice)`,
+    Friendly: (name, slots) =>
+      `${greet(name)}\n\nGreat news—124 Oak St is available. ${slotsLine(slots)} I can send a quick checklist and lock it in.\n\nThanks so much,\nCastra`,
+    "High-energy": (name, slots) =>
+      `${greet(name)}\n\nLet’s do it—124 Oak St is ready for a tour. ${slotsLine(slots)} Tell me what timing works and I’ll confirm right away.\n\nLet’s make moves,\nCastra`,
+    Luxury: (name, slots) =>
+      `${greet(name)}\n\nDelighted to assist—124 Oak St is available. ${slotsLine(slots)} I will coordinate a seamless private showing.\n\nSincerely,\nCastra`
+  },
+  seller: {
+    Professional: (name) =>
+      `${greet(name)}\n\nI will run a comparative market analysis for 88 Grove and send pricing and launch strategy today. Would you prefer a brief call or an in-person walkthrough?\n\nBest regards,\nCastra`,
+    Friendly: (name) =>
+      `${greet(name)}\n\nI’ll pull comps for 88 Grove and map out a game plan. Would you like a quick call or a walkthrough?\n\nThanks,\nCastra`,
+    "High-energy": (name) =>
+      `${greet(name)}\n\nOn it—I’ll comp 88 Grove and outline a winning plan. Call or walkthrough—what’s best?\n\nTalk soon,\nCastra`,
+    Luxury: (name) =>
+      `${greet(name)}\n\nI will prepare a detailed valuation and a tailored launch plan for 88 Grove. Shall we schedule a private walkthrough?\n\nWarm regards,\nCastra`
+  },
+  info: {
+    Professional: (name) =>
+      `${greet(name)}\n\nI will share school ratings, commute options, and nearby parks for 19 Seaview. Are evenings after 5 PM best for a quick call?\n\nBest regards,\nCastra`,
+    Friendly: (name) =>
+      `${greet(name)}\n\nI will send school ratings and park recommendations for 19 Seaview. Are evenings after 5 PM good for a quick call?\n\nThanks,\nCastra`,
+    "High-energy": (name) =>
+      `${greet(name)}\n\nI will round up schools, commute tips, and parks around 19 Seaview—would you like to chat tonight?\n\nTalk soon,\nCastra`,
+    Luxury: (name) =>
+      `${greet(name)}\n\nI will curate school insights and neighborhood highlights for 19 Seaview. Would this evening work for a brief call?\n\nSincerely,\nCastra`
+  },
+  openhouse: {
+    Professional: (name) =>
+      `${greet(name)}\n\nThe open house for 52 Birch is Sunday from 12:00–2:00 PM. I can meet you beforehand for a private walkthrough.\n\nBest regards,\nCastra`,
+    Friendly: (name) =>
+      `${greet(name)}\n\n52 Birch is open Sunday from 12:00–2:00 PM. I will be there a bit early if you would like a private tour first.\n\nThanks,\nCastra`,
+    "High-energy": (name) =>
+      `${greet(name)}\n\n52 Birch is live Sunday from 12:00–2:00 PM—come through! I can do an early walkthrough as well.\n\nLet’s make moves,\nCastra`,
+    Luxury: (name) =>
+      `${greet(name)}\n\n52 Birch hosts an open house Sunday from 12:00–2:00 PM. I am happy to arrange a private preview beforehand.\n\nWarm regards,\nCastra`
+  }
+};
+export function nameFromEmail(email:string){
+  const base = (email?.split("@")[0] || "there").replace(/[^\w]/g," ").trim();
+  return base.replace(/\b\w/g, c=>c.toUpperCase());
+}
+EOF
+
+          # components
+          mkdir -p components/ui
+
+          cat > components/ui/button.tsx << 'EOF'
+import { cva, type VariantProps } from "class-variance-authority";
+import clsx from "clsx";
+import React from "react";
+const styles = cva("inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:opacity-60 disabled:pointer-events-none",{
+  variants:{ variant:{ default:"bg-indigo text-soft hover:opacity-90", outline:"bg-transparent border border-gold text-indigo hover:bg-indigo/5", ghost:"bg-transparent hover:bg-indigo/5", secondary:"bg-gold text-indigo hover:opacity-90" }, size:{ default:"h-9 px-4", lg:"h-11 px-6", icon:"h-9 w-9 p-0" } }, defaultVariants:{ variant:"default", size:"default" }
+});
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof styles> {}
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({ className, variant, size, ...props }, ref) => (
+  <button ref={ref} className={clsx(styles({ variant, size }), className)} {...props} />
+));
+Button.displayName = "Button";
+EOF
+
+          cat > components/ui/card.tsx << 'EOF'
+import clsx from "clsx";
+export function Card({ className = "", children }: { className?: string; children: React.ReactNode }) {
+  return <div className={clsx("rounded-md border bg-white/70 dark:bg-white/[0.05] backdrop-blur", className)}>{children}</div>;
+}
+EOF
+
+          cat > components/ui/dialog.tsx << 'EOF'
+"use client";
+import React from "react";
+import clsx from "clsx";
+
+type CtxType = { open: boolean; setOpen: (o: boolean) => void };
+const Ctx = React.createContext<CtxType | null>(null);
+
+export function Dialog({ open: controlled, onOpenChange, children }: { open?: boolean; onOpenChange?: (o: boolean) => void; children: React.ReactNode }) {
+  const [inner, setInner] = React.useState(false);
+  const isControlled = controlled !== undefined;
+  const open = isControlled ? !!controlled : inner;
+  const setOpen = (o: boolean) => {
+    if (!isControlled) setInner(o);
+    onOpenChange?.(o);
+  };
+  return <Ctx.Provider value={{ open, setOpen }}>{children}</Ctx.Provider>;
+}
+
+export function DialogTrigger({ asChild, children }: { asChild?: boolean; children: React.ReactNode }) {
+  const ctx = React.useContext(Ctx)!;
+  const onClick = () => ctx.setOpen(true);
+  if (asChild && React.isValidElement(children)) {
+    const orig = (children as any).props?.onClick;
+    return React.cloneElement(children as any, { onClick: (...args: any[]) => { orig?.(...args); onClick(); } });
+  }
+  return <button onClick={onClick}>{children}</button>;
+}
+
+export function DialogContent({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const ctx = React.useContext(Ctx)!;
+  if (!ctx.open) return null;
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/30" onClick={() => ctx.setOpen(false)} />
+      <div className={clsx("absolute left-1/2 top-1/2 w-[94vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md glass border border-gold/30 p-4", className)}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function DialogHeader({ children }: { children: React.ReactNode }) { return <div className="mb-3">{children}</div>; }
+export function DialogTitle({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <div className={clsx("text-lg font-semibold", className)}>{children}</div>;
+}
+EOF
+
+          cat > components/ui/tabs.tsx << 'EOF'
+"use client";
+import React from "react";
+import clsx from "clsx";
+type TabsContext = { value: string; onValueChange: (v: string) => void };
+const Ctx = React.createContext<TabsContext | null>(null);
+export function Tabs({ value, onValueChange, children }: { value: string; onValueChange: (v: string) => void; children: React.ReactNode }) {
+  return <Ctx.Provider value={{ value, onValueChange }}>{children}</Ctx.Provider>;
+}
+export function TabsList({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <div className={clsx("inline-flex items-center gap-1 p-1 rounded-md border border-gold/20", className)}>{children}</div>;
+}
+export function TabsTrigger({ value, children }: { value: string; children: React.ReactNode }) {
+  const ctx = React.useContext(Ctx)!; const active = ctx.value === value;
+  return <button className={clsx("px-3 py-1 rounded-md text-sm", active ? "bg-indigo text-soft" : "hover:bg-indigo/5")} onClick={() => ctx.onValueChange(value)}>{children}</button>;
+}
+EOF
+
+          cat > components/ui/badge.tsx << 'EOF'
+import clsx from "clsx";
+export function Badge({ children, variant = "default" as "default" | "outline" }) {
+  return <span className={clsx("px-2 py-0.5 rounded-full text-xs", variant === "outline" ? "border border-gold/40" : "bg-gold text-indigo")}>{children}</span>;
+}
+EOF
+
+          cat > components/ui/input.tsx << 'EOF'
+import clsx from "clsx";
+import React from "react";
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => (
+  <input ref={ref} className={clsx("h-9 w-full rounded-md border border-gold/30 bg-transparent px-3 text-sm outline-none focus:ring-2 focus:ring-gold/40", className)} {...props} />
+));
+Input.displayName = "Input";
+EOF
+
+          cat > components/ui/label.tsx << 'EOF'
+import React from "react";
+export const Label = ({ className = "", ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) => (
+  <label className={`text-sm font-medium ${className}`} {...props} />
+);
+EOF
+
+          cat > components/ui/textarea.tsx << 'EOF'
+import React from "react";
+import clsx from "clsx";
+export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => (
+  <textarea ref={ref} className={clsx("w-full rounded-md border border-gold/30 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gold/40", className)} {...props} />
+));
+Textarea.displayName = "Textarea";
+EOF
+
+          # components (app)
+          cat > components/GradientBG.tsx << 'EOF'
+"use client";
+import { motion } from "framer-motion";
+import { premiumBlobs } from "@/lib/gradients";
+export default function GradientBG({ className = "" }: { className?: string }) {
+  return (
+    <div className={`pointer-events-none absolute inset-0 -z-10 overflow-hidden ${className}`}>
+      {premiumBlobs.map((b, i) => (
+        <motion.div
+          key={i}
+          className={`opacity-30 rounded-full bg-gradient-radial ${i===0 ? "via-[#2E2A47]" : "via-[#D4AF37]"} from-transparent to-transparent`}
+          style={{ position: "absolute", ...b.style, filter: "blur(60px)" }}
+          animate={{ y: [0, -15, 0], scale: [1, 1.03, 1] }}
+          transition={{ duration: 16 + i * 2, repeat: Infinity }}
+        />
+      ))}
+    </div>
+  );
+}
+EOF
+
+          cat > components/LiveDemo.tsx << 'EOF'
+"use client";
+import { useEffect, useState } from "react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatSlot } from "@/lib/format";
+
+type Tone = "Professional" | "Friendly" | "High-energy" | "Luxury";
+const leads = [
+  { id:"1", from:"maria@buyer.com", subject:"Tour this weekend?", body:"Hi! Is 124 Oak St still available? Could we tour Saturday?", intent:"tour" },
+  { id:"2", from:"kevin@seller.com", subject:"Thinking of listing 88 Grove", body:"What’s a realistic list price? Timeline is flexible.", intent:"seller" },
+  { id:"3", from:"tina@buyer.com", subject:"School district questions", body:"Curious about schools near 19 Seaview.", intent:"info" },
+  { id:"4", from:"olivia@buyer.com", subject:"Open house info for 52 Birch", body:"What time is the open house?", intent:"openhouse" }
+];
+
+export default function LiveDemo(){
+  const [selected, setSelected] = useState(leads[0]);
+  const [tone, setTone] = useState<Tone>("Friendly");
+  const [slots, setSlots] = useState<string[]>([]);
+  const [reply, setReply] = useState("");
+
+  async function fetchSlots(){
+    const res = await fetch("/api/demo/slots");
+    const j = await res.json();
+    setSlots(j?.slots || []);
+    return j?.slots || [];
+  }
+  async function fetchReply(intent:string, t:Tone, s:string[], from:string){
+    const res = await fetch("/api/demo/reply", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ intent, tone: t, slots: s, from }) });
+    const j = await res.json();
+    setReply(j?.text || "");
+  }
+
+  useEffect(() => {
+    (async () => {
+      const s = await fetchSlots();
+      await fetchReply(selected.intent, tone, s, selected.from);
+    })();
+  }, [selected.id, tone]);
+
+  return (
+    <Card className="relative p-4 md:p-6 glass border border-gold/20 shadow-glow">
+      <span className="absolute -left-2 top-3 rotate-[-6deg] bg-[#D4AF37] text-indigo px-2 py-0.5 rounded text-xs font-semibold shadow-sm">
+        LIVE DEMO (mock data)
+      </span>
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card className="overflow-hidden border border-gold/20">
+          <div className="px-4 py-3 border-b text-sm font-semibold">Leads</div>
+          <ul>
+            {leads.map(l => (
+              <li key={l.id} onClick={()=>setSelected(l)} className={`px-4 py-3 border-b cursor-pointer hover:bg-indigo/5 dark:hover:bg-white/10 ${selected.id===l.id?"bg-indigo/5 dark:bg-white/10":""}`}>
+                <div className="text-xs text-slate">{l.from}</div>
+                <div className="text-sm font-medium">{l.subject}</div>
+                <div className="text-xs line-clamp-1 text-slate">{l.body}</div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <div className="flex flex-col gap-3">
+          <Tabs value={tone} onValueChange={(v)=>setTone(v as Tone)}>
+            <TabsList className="grid grid-cols-4">
+              {(["Professional","Friendly","High-energy","Luxury"] as Tone[]).map(t=>(
+                <TabsTrigger key={t} value={t}>{t}</TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
+          <Card className="p-3 border border-gold/20">
+            <div className="text-xs text-slate mb-1">Suggested reply</div>
+            <textarea className="w-full h-48 resize-none bg-transparent outline-none text-sm" value={reply} readOnly />
+            <div className="flex items-center gap-2 mt-3">
+              <Button onClick={()=>navigator.clipboard.writeText(reply)}>Copy to Drafts</Button>
+              <Button variant="outline" disabled>Send (requires approval)</Button>
+            </div>
+            <div className="text-[11px] text-slate mt-2">Includes real-time slot suggestions below.</div>
+          </Card>
+
+          <Card className="p-3 border border-gold/20">
+            <div className="text-sm font-medium mb-2">Proposed meeting times</div>
+            <div className="flex flex-wrap gap-2">
+              {slots.slice(0,6).map(s => (
+                <span key={s} className="px-2 py-1 rounded-full border text-xs">{formatSlot(s)}</span>
+              ))}
+            </div>
+            <div className="mt-3">
+              <Button variant="secondary" onClick={()=>fetchSlots()}>Regenerate Slots</Button>
+            </div>
+          </Card>
+        </div>
+      </div>
+    </Card>
+  );
+}
+EOF
+
+          cat > components/WaitlistDialog.tsx << 'EOF'
+"use client";
+import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+export default function WaitlistDialog({ triggerClassName = "" }: { triggerClassName?: string }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+  async function onSubmit(e: any) {
+    e.preventDefault();
+    setLoading(true);
+    setMsg("");
+    const form = new FormData(e.currentTarget);
+    const payload = Object.fromEntries(form.entries());
+    const res = await fetch("/api/waitlist", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
+    const j = await res.json();
+    setLoading(false);
+    if (j?.ok) { setMsg("You’re on the waitlist! We’ll be in touch soon."); (e.currentTarget as HTMLFormElement).reset(); }
+    else { setMsg(j?.error || "Something went wrong. Please try again."); }
+  }
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild><Button className={triggerClassName}>Join Waitlist</Button></DialogTrigger>
+      <DialogContent>
+        <DialogHeader><DialogTitle className="font-serif text-xl">Join the Castra waitlist</DialogTitle></DialogHeader>
+        <form className="grid gap-3" onSubmit={onSubmit}>
+          <div className="grid gap-1">
+            <Label htmlFor="name">Name</Label>
+            <Input id="name" name="name" required />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="email">Email</Label>
+            <Input id="email" name="email" type="email" required />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="brokerage">Brokerage (optional)</Label>
+            <Input id="brokerage" name="brokerage" />
+          </div>
+          <Button disabled={loading} type="submit">{loading ? "Submitting…" : "Submit"}</Button>
+          {msg ? <div className="text-sm">{msg}</div> : null}
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+EOF
+
+          cat > components/Navbar.tsx << 'EOF'
+"use client";
+import Link from "next/link";
+import WaitlistDialog from "./WaitlistDialog";
+import ThemeToggle from "./ThemeToggle";
+
+export default function Navbar() {
+  return (
+    <header className="sticky top-0 z-20 border-b border-gold/20 bg-soft/80 backdrop-blur">
+      <div className="container mx-auto px-4 h-14 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2">
+          <span className="h-serif text-xl"><span className="text-gold">Castra</span></span>
+        </Link>
+        <nav className="hidden md:flex items-center gap-6 text-sm">
+          <Link href="#live-demo" className="hover:text-gold">Demo</Link>
+          <Link href="/security" className="hover:text-gold">Security</Link>
+          <Link href="#pricing" className="hover:text-gold">Pricing</Link>
+          <Link href="#faq" className="hover:text-gold">FAQ</Link>
+        </nav>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <WaitlistDialog />
+        </div>
+      </div>
+    </header>
+  );
+}
+EOF
+
+          cat > components/Footer.tsx << 'EOF'
+import Link from "next/link";
+import WaitlistDialog from "./WaitlistDialog";
+export default function Footer() {
+  return (
+    <footer className="border-t border-gold/20 py-8">
+      <div className="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="text-sm text-slate">© {new Date().getFullYear()} Castra</div>
+        <div className="flex items-center gap-6 text-sm">
+          <Link href="/privacy" className="hover:text-gold">Privacy</Link>
+          <Link href="/terms" className="hover:text-gold">Terms</Link>
+          <Link href="/security" className="hover:text-gold">Security</Link>
+        </div>
+        <WaitlistDialog />
+      </div>
+    </footer>
+  );
+}
+EOF
+
+          cat > components/SectionHeading.tsx << 'EOF'
+export default function SectionHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div>
+      <div className="text-teal text-sm tracking-wide mb-1">{eyebrow}</div>
+      <h2 className="h-serif text-2xl md:text-3xl">{title}</h2>
+    </div>
+  );
+}
+EOF
+
+          cat > components/Pricing.tsx << 'EOF'
+"use client";
+import GlowCard from "./GlowCard";
+import { Button } from "./ui/button";
+import WaitlistDialog from "./WaitlistDialog";
+
+export default function Pricing({ data }: { data: any }) {
+  const { title, subtitle, plan } = data;
+  return (
+    <div id="pricing">
+      <div className="mb-6">
+        <div className="text-teal text-sm">{subtitle}</div>
+        <h3 className="h-serif text-3xl">{title}</h3>
+      </div>
+      <GlowCard className="p-8 max-w-xl">
+        <div className="flex items-end gap-3">
+          <div className="text-xl font-medium">{plan.name}</div>
+          <div className="h-serif text-3xl text-gold">{plan.price}</div>
+        </div>
+        <ul className="mt-4 space-y-2 text-sm">
+          {plan.bullets.map((b: string) => <li key={b}>• {b}</li>)}
+        </ul>
+        <div className="mt-6 flex gap-3">
+          <Button>{plan.cta}</Button>
+          <WaitlistDialog triggerClassName="bg-transparent border border-gold text-indigo hover:bg-indigo/5" />
+        </div>
+      </GlowCard>
+    </div>
+  );
+}
+EOF
+
+          cat > components/FAQ.tsx << 'EOF'
+export default function FAQ({ items }: { items: { q: string; a: string }[] }) {
+  return (
+    <div id="faq" className="max-w-2xl space-y-3">
+      {items.map((it) => (
+        <details key={it.q} className="glass border border-gold/20 rounded-md p-4">
+          <summary className="cursor-pointer font-medium">{it.q}</summary>
+          <div className="text-slate mt-2 text-sm">{it.a}</div>
+        </details>
+      ))}
+    </div>
+  );
+}
+EOF
+
+          cat > components/TestimonialMarquee.tsx << 'EOF'
+export default function TestimonialMarquee({ items, className = "" }: { items: { quote: string; name: string; role: string }[]; className?: string }) {
+  const list = [...items, ...items];
+  return (
+    <div className={`overflow-hidden ${className}`}>
+      <div className="marquee">
+        {list.map((t, i) => (
+          <div key={i} className="min-w-[320px] max-w-sm glass border border-gold/20 rounded-md p-4">
+            <div className="text-sm">“{t.quote}”</div>
+            <div className="text-xs text-slate mt-2">— {t.name}, {t.role}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+EOF
+
+          cat > components/ThemeToggle.tsx << 'EOF'
+"use client";
+import { useTheme } from "next-themes";
+import { Moon, Sun } from "lucide-react";
+import { Button } from "./ui/button";
+
+export default function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  const isDark = theme === "dark";
+  return (
+    <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={() => setTheme(isDark ? "light" : "dark")}>
+      {isDark ? <Sun size={18} /> : <Moon size={18} />}
+    </Button>
+  );
+}
+EOF
+
+          cat > components/TrustBar.tsx << 'EOF'
+import { Badge } from "./ui/badge";
+export default function TrustBar({ items, className = "" }: { items: string[]; className?: string }) {
+  return (
+    <div className={`flex flex-wrap gap-2 ${className}`}>
+      {items.map((t) => (
+        <Badge key={t} variant="outline">{t}</Badge>
+      ))}
+    </div>
+  );
+}
+EOF
+
+          cat > components/GlowCard.tsx << 'EOF'
+import { Card } from "./ui/card";
+export default function GlowCard({ className = "", children }: { className?: string; children: React.ReactNode }) {
+  return <Card className={`glass border border-gold/20 shadow-glow ${className}`}>{children}</Card>;
+}
+EOF
+
+          # layout + pages
+          cat > app/layout.tsx << 'EOF'
+import "./globals.css";
+import { Inter, DM_Serif_Display } from "next/font/google";
+import { ThemeProvider } from "next-themes";
+import { DefaultSeo } from "next-seo";
+import SEO from "@/next-seo.config";
+import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const serif = DM_Serif_Display({ subsets: ["latin"], weight: "400", variable: "--font-serif" });
+
+export const metadata = { title: "Castra — Inbox & Calendar Co-Pilot" };
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.variable} ${serif.variable} font-sans bg-soft text-indigo`}>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <DefaultSeo {...SEO} />
+          <Navbar />
+          {children}
+          <Footer />
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}
+EOF
+
+          cat > components/LogoGrid.tsx << 'EOF'
+export default function LogoGrid() {
+  const logos = ["Compass","Sotheby’s","Keller Williams","Coldwell Banker","RE/MAX","eXp"];
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-6 gap-4 opacity-80">
+      {logos.map(l => (
+        <div key={l} className="text-center text-sm border border-gold/20 rounded-md py-3 glass">{l}</div>
+      ))}
+    </div>
+  );
+}
+EOF
+
+          cat > app/page.tsx << 'EOF'
+import GradientBG from "@/components/GradientBG";
+import LiveDemo from "@/components/LiveDemo";
+import SectionHeading from "@/components/SectionHeading";
+import Pricing from "@/components/Pricing";
+import FAQ from "@/components/FAQ";
+import TestimonialMarquee from "@/components/TestimonialMarquee";
+import TrustBar from "@/components/TrustBar";
+import GlowCard from "@/components/GlowCard";
+import WaitlistDialog from "@/components/WaitlistDialog";
+import LogoGrid from "@/components/LogoGrid";
+import { Button } from "@/components/ui/button";
+import { siteCopy } from "@/lib/copy";
+
+export default function HomePage() {
+  const { hero, features, howItWorks, security, testimonials, pricing, faq, footer } = siteCopy;
+
+  return (
+    <main className="relative">
+      <GradientBG />
+
+      <section className="container mx-auto px-4 pt-16 md:pt-24 pb-12 md:pb-20">
+        <div className="max-w-3xl">
+          <div className="text-teal text-sm tracking-wide mb-2">{hero.eyebrow}</div>
+          <h1 className="h-serif text-4xl md:text-6xl mb-4">{hero.title}</h1>
+          <p className="text-slate max-w-2xl mb-6">{hero.subtitle}</p>
+          <div className="flex flex-wrap gap-3">
+            <a href="#live-demo"><Button size="lg">{hero.primaryCta}</Button></a>
+            <WaitlistDialog triggerClassName="bg-transparent border border-gold text-indigo hover:bg-indigo/5" />
+          </div>
+          <TrustBar items={hero.trust} className="mt-6" />
+        </div>
+      </section>
+
+      <section className="container mx-auto px-4 py-8">
+        <LogoGrid />
+      </section>
+
+      <section id="live-demo" className="container mx-auto px-4 py-10 md:py-16">
+        <SectionHeading eyebrow="Experience it" title="Generate replies and propose times" />
+        <div className="mt-6"><LiveDemo /></div>
+      </section>
+
+      <section className="container mx-auto px-4 py-10 md:py-16">
+        <SectionHeading eyebrow="Capabilities" title="Everything you need to move fast" />
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+          {features.map((f) => (
+            <GlowCard key={f.title} className="p-5">
+              <div className="text-lg font-semibold mb-1">{f.title}</div>
+              <div className="text-slate text-sm">{f.body}</div>
+            </GlowCard>
+          ))}
+        </div>
+      </section>
+
+      <section className="container mx-auto px-4 py-10 md:py-16">
+        <SectionHeading eyebrow="How it works" title="Connect. Set your voice. Approve & send." />
+        <div className="grid md:grid-cols-3 gap-4 mt-6">
+          {howItWorks.map((s) => (
+            <GlowCard key={s.step} className="p-5">
+              <div className="text-gold font-semibold mb-1">{s.step}</div>
+              <div className="font-medium mb-1">{s.title}</div>
+              <div className="text-slate text-sm">{s.body}</div>
+            </GlowCard>
+          ))}
+        </div>
+      </section>
+
+      <section className="container mx-auto px-4 py-10 md:py-16">
+        <SectionHeading eyebrow="Security" title="Enterprise-grade by default" />
+        <GlowCard className="p-6 mt-6">
+          <ul className="grid md:grid-cols-2 gap-2">
+            {security.bullets.map((b) => (<li key={b} className="text-sm">• {b}</li>))}
+          </ul>
+          <a href="/security" className="inline-block mt-4"><Button variant="outline">Read Security Overview</Button></a>
+        </GlowCard>
+      </section>
+
+      <section className="container mx-auto px-4 py-10 md:py-16">
+        <SectionHeading eyebrow="Loved by agents" title="What top performers say" />
+        <TestimonialMarquee items={testimonials} className="mt-6" />
+      </section>
+
+      <section className="container mx-auto px-4 py-10 md:py-16">
+        <Pricing data={pricing} />
+      </section>
+
+      <section className="container mx-auto px-4 py-10 md:py-16">
+        <FAQ items={faq} />
+      </section>
+
+      <section className="container mx-auto px-4 py-16">
+        <GlowCard className="p-8 text-center">
+          <div className="h-serif text-3xl mb-2">{footer.ctaTitle}</div>
+          <div className="text-slate mb-6">{footer.ctaSubtitle}</div>
+          <WaitlistDialog />
+        </GlowCard>
+      </section>
+
+      <div className="sticky-cta">
+        <WaitlistDialog triggerClassName="w-full shadow-glow" />
+      </div>
+    </main>
+  );
+}
+EOF
+
+          # legal pages
+          mkdir -p "app/(legal)"
+          cat > app/(legal)/privacy/page.tsx << 'EOF'
+export default function PrivacyPage() {
+  return (
+    <main className="container mx-auto px-4 py-12">
+      <h1 className="h-serif text-3xl mb-4">Privacy Policy</h1>
+      <p className="text-slate">
+        We only access the minimum data required to provide the service. Emails are read for drafting; nothing is sent without your approval. We do not sell data. By default, we do not train models on your emails. Data deletion by request.
+      </p>
+    </main>
+  );
+}
+EOF
+
+          cat > app/(legal)/terms/page.tsx << 'EOF'
+export default function TermsPage() {
+  return (
+    <main className="container mx-auto px-4 py-12">
+      <h1 className="h-serif text-3xl mb-4">Terms of Service</h1>
+      <p className="text-slate">
+        By using Castra, you agree to use the product lawfully and to review drafts prior to sending. The service is provided as-is, with commercially reasonable security and uptime. Billing renews monthly until canceled.
+      </p>
+    </main>
+  );
+}
+EOF
+
+          cat > app/(legal)/security/page.tsx << 'EOF'
+export default function SecurityPage() {
+  return (
+    <main className="container mx-auto px-4 py-12">
+      <h1 className="h-serif text-3xl mb-4">Security</h1>
+      <ul className="list-disc pl-6 space-y-2 text-slate">
+        <li>OAuth with least-privilege scopes</li>
+        <li>Encryption in transit and at rest</li>
+        <li>Drafts-only by default with an approval gate</li>
+        <li>Activity log for all actions</li>
+        <li>No data sold</li>
+        <li>No training on your emails by default</li>
+        <li>SOC 2 in progress</li>
+        <li>Data deletion upon request</li>
+      </ul>
+    </main>
+  );
+}
+EOF
+
+          # APIs
+          mkdir -p app/api/demo/slots app/api/demo/reply app/api/og app/api/waitlist
+
+          cat > app/api/demo/slots/route.ts << 'EOF'
+import { NextResponse } from "next/server";
+import { busyBlocks } from "@/lib/busy";
+export async function GET() {
+  const now = new Date();
+  const slots:string[] = [];
+  const ranges = busyBlocks.map(([s,e])=>[new Date(s), new Date(e)]);
+  const isBusy = (t:Date) => ranges.some(([s,e]) => t>=s && t<e);
+  for (let d=0; d<10; d++){
+    for (let h=9; h<=17; h++){
+      for (let m of [0,30]){
+        const t = new Date(now); t.setDate(now.getDate()+d); t.setHours(h, m, 0, 0);
+        if (t>now && !isBusy(t)) slots.push(t.toISOString());
+      }
+    }
+  }
+  return NextResponse.json({ slots });
+}
+EOF
+
+          cat > app/api/demo/reply/route.ts << 'EOF'
+import { NextResponse } from "next/server";
+import { templates, nameFromEmail } from "@/lib/templates";
+export async function POST(req:Request){
+  const { intent = "tour", tone = "Friendly", slots = [], from = "there@example.com" } = await req.json();
+  const bucket = (templates as any)[intent] || (templates as any).tour;
+  const fn = bucket?.[tone] || bucket?.["Friendly"];
+  const name = nameFromEmail(from);
+  const text = typeof fn === "function" ? fn(name, slots) : String(fn);
+  return NextResponse.json({ text });
+}
+EOF
+
+          cat > app/api/waitlist/route.ts << 'EOF'
+import { NextResponse } from "next/server";
+import { promises as fs } from "fs";
+export async function POST(req: Request) {
+  try {
+    const { name = "", email = "", brokerage = "" } = await req.json();
+    if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return NextResponse.json({ ok:false, error:"Please provide a valid name and email." }, { status: 400 });
+    }
+    const record = { name, email, brokerage, at: new Date().toISOString() };
+    const path = "/tmp/waitlist.json";
+    try {
+      const existing = JSON.parse(await fs.readFile(path, "utf8"));
+      existing.push(record);
+      await fs.writeFile(path, JSON.stringify(existing, null, 2));
+    } catch {
+      await fs.writeFile(path, JSON.stringify([record], null, 2));
+    }
+    return NextResponse.json({ ok:true });
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error:e?.message || "Server error." }, { status: 500 });
+  }
+}
+EOF
+
+          cat > app/api/og/route.ts << 'EOF'
+import { ImageResponse } from "@vercel/og";
+export const runtime = "edge";
+export async function GET() {
+  const gradient = "linear-gradient(135deg, #2E2A47 0%, #1F1B33 50%, #2E2A47 100%)";
+  return new ImageResponse(
+    (
+      <div style={{ width: "1200px", height: "630px", display: "flex", flexDirection: "column", justifyContent: "center", padding: "72px", backgroundImage: gradient, color: "#FAFAFA" }}>
+        <div style={{ fontSize: 56, fontFamily: "serif", letterSpacing: -0.5, marginBottom: 12 }}>
+          <span style={{ color: "#D4AF37" }}>Castra</span>
+        </div>
+        <div style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.2 }}>Inbox & Calendar Co-Pilot</div>
+        <div style={{ marginTop: 16, fontSize: 28, opacity: 0.9 }}>Reply in 10 seconds. Book more tours.</div>
+        <div style={{ position: "absolute", bottom: 48, left: 72, fontSize: 20, opacity: 0.8 }}>castra.ai</div>
+      </div>
+    ),
+    { width: 1200, height: 630 }
+  );
+}
+EOF
+
+      - name: Build (sanity check)
+        working-directory: web
+        run: npm run build --silent
+
+      - name: Commit & push
+        run: |
+          set -e
+          BRANCH="feat/marketing-site"
+          git add -A
+          git commit -m "feat: premium marketing site (Next.js 14, Tailwind, next-themes, next-seo, OG image, live demo, waitlist API) in /web" || echo "Nothing to commit"
+          git push --set-upstream origin "$BRANCH"
+
+      - name: Open PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const head = "feat/marketing-site";
+            const base = "main";
+            try {
+              const pr = await github.rest.pulls.create({
+                owner, repo, title: "Seed: Castra marketing site (web/)",
+                head, base,
+                body: [
+                  "Premium, conversion-focused marketing site:",
+                  "- Next.js 14 (App Router, TS), Tailwind, next-themes, next-seo",
+                  "- Framer Motion gradients, glass cards, gold accents",
+                  "- Components, legal pages, and API routes for live demo + waitlist",
+                  "- OG image at /api/og referenced by SEO config"
+                ].join("\\n")
+              });
+              core.info(`PR created: ${pr.data.html_url}`);
+            } catch (e) {
+              core.warning(`PR create failed (maybe exists): ${e.message}`);
+            }
